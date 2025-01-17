@@ -1,128 +1,90 @@
 import streamlit as st
 import os
 import sqlite3
-import base64
-import qrcode
-from io import BytesIO
+from PIL import Image
 
-# Constants
-UPLOAD_DIR = "uploads"
-DB_FILE = "file_manager.db"
-
-# Create necessary directories and database
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-conn = sqlite3.connect(DB_FILE)
+# Create a SQLite database to store file metadata
+conn = sqlite3.connect('file_manager.db')
 c = conn.cursor()
-c.execute("""
-CREATE TABLE IF NOT EXISTS files (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT,
-    category TEXT,
-    path TEXT
-)
-""")
-conn.commit()
 
-# Authentication
-def authenticate(username, password):
-    return username == "admin" and password == "password"
+# Create table for storing file metadata
+c.execute('''
+    CREATE TABLE IF NOT EXISTS files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        filename TEXT,
+        category TEXT,
+        file_path TEXT
+    )
+''')
 
-# Streamlit App
-st.title("Enhanced Cloud-based File Management System")
-st.write("Securely upload, categorize, search, and share files.")
-
-# Authentication
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-if not st.session_state.authenticated:
-    st.sidebar.header("Login")
-    username = st.sidebar.text_input("Username")
-    password = st.sidebar.text_input("Password", type="password")
-    if st.sidebar.button("Login"):
-        if authenticate(username, password):
-            st.session_state.authenticated = True
-            st.success("Logged in successfully!")
-        else:
-            st.error("Invalid username or password.")
-    st.stop()
-
-# File categorization function
+# Function to categorize files based on file extensions
 def categorize_file(file_name):
-    if file_name.endswith((".png", ".jpg", ".jpeg")):
-        return "Images"
-    elif file_name.endswith((".txt", ".pdf", ".csv", ".docx")):
-        return "Documents"
+    if file_name.endswith(('.jpg', '.jpeg', '.png', '.gif')):
+        return 'Images'
+    elif file_name.endswith(('.pdf', '.docx', '.txt', '.pptx')):
+        return 'Documents'
     else:
-        return "Others"
+        return 'Others'
 
-# File upload
-uploaded_file = st.file_uploader("Choose a file to upload")
-if uploaded_file:
-    file_name = uploaded_file.name
-    category = categorize_file(file_name)
-    file_path = os.path.join(UPLOAD_DIR, file_name)
-
+# Function to handle file upload
+def handle_file_upload(uploaded_file):
+    category = categorize_file(uploaded_file.name)
+    file_path = os.path.join("uploads", uploaded_file.name)
+    
+    # Save the uploaded file to the "uploads" folder
     with open(file_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
-    
-    c.execute("INSERT INTO files (name, category, path) VALUES (?, ?, ?)", (file_name, category, file_path))
-    conn.commit()
-    st.success(f"File '{file_name}' uploaded and categorized as '{category}'.")
 
-# Search files
-st.header("Search Files")
+    # Insert file metadata into SQLite database
+    c.execute("INSERT INTO files (filename, category, file_path) VALUES (?, ?, ?)",
+              (uploaded_file.name, category, file_path))
+    conn.commit()
+
+    return uploaded_file.name, category, file_path
+
+# Function to search for files in the database
+def search_files(query):
+    c.execute("SELECT * FROM files WHERE filename LIKE ?", ('%' + query + '%',))
+    return c.fetchall()
+
+# Function to delete all files from the database and file system
+def delete_all_files():
+    c.execute("DELETE FROM files")
+    conn.commit()
+    for file in os.listdir("uploads"):
+        os.remove(os.path.join("uploads", file))
+
+# Streamlit UI
+st.title('CloudEase File Manager')
+
+# File upload
+uploaded_file = st.file_uploader("Choose a file to upload", type=["jpg", "jpeg", "png", "gif", "pdf", "docx", "txt", "pptx"])
+if uploaded_file:
+    file_name, category, file_path = handle_file_upload(uploaded_file)
+    st.success(f'File {file_name} uploaded successfully!')
+    st.write(f'Category: {category}')
+    st.write(f'File path: {file_path}')
+
+# Search functionality
 search_query = st.text_input("Search for a file by name")
 if search_query:
-    c.execute("SELECT * FROM files WHERE name LIKE ?", (f"%{search_query}%",))
-    results = c.fetchall()
+    results = search_files(search_query)
     if results:
         st.write("Search Results:")
         for result in results:
-            st.write(f"- {result[1]} ({result[2]})")
+            st.write(f"Filename: {result[1]}, Category: {result[2]}, File Path: {result[3]}")
     else:
         st.write("No files found.")
 
-# File categories
-st.header("File Categories")
-categories = ["Images", "Documents", "Others"]
-for category in categories:
-    st.subheader(category)
-    c.execute("SELECT * FROM files WHERE category = ?", (category,))
-    files = c.fetchall()
-    if files:
-        for file in files:
-            file_name = file[1]
-            file_path = file[3]
-            st.write(f"- {file_name}")
-            
-            # Provide download button
-            with open(file_path, "rb") as f:
-                file_bytes = f.read()
-            st.download_button(
-                label="Download",
-                data=file_bytes,
-                file_name=file_name,
-                mime="application/octet-stream"
-            )
-            
-            # Generate QR code and link
-            file_url = f"http://localhost:8501/{file_name}"  # Replace with hosted URL
-            qr = qrcode.QRCode()
-            qr.add_data(file_url)
-            qr_img = qr.make_image(fill_color="black", back_color="white")
-            buffer = BytesIO()
-            qr_img.save(buffer, format="PNG")
-            st.image(buffer.getvalue(), caption="QR Code")
-            st.write(f"[Download Link]({file_url})")
-    else:
-        st.write("No files in this category.")
+# File management options
+if st.button('Delete all files'):
+    delete_all_files()
+    st.success('All files have been deleted.')
 
-# Manage files
-st.header("Manage Files")
-if st.button("Delete All Files"):
-    c.execute("DELETE FROM files")
-    conn.commit()
-    for file in os.listdir(UPLOAD_DIR):
-        os.remove(os.path.join(UPLOAD_DIR, file))
-    st.success("All files deleted successfully.")
+# Display uploaded files
+if st.button("View uploaded files"):
+    st.write("Uploaded Files:")
+    c.execute("SELECT * FROM files")
+    files = c.fetchall()
+    for file in files:
+        st.write(f"Filename: {file[1]}, Category: {file[2]}, File Path: {file[3]}")
