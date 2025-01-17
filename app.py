@@ -28,6 +28,10 @@ def categorize_file(file_name):
 
 # Function to handle file upload
 def handle_file_upload(uploaded_file):
+    # Ensure the 'uploads' directory exists
+    if not os.path.exists("uploads"):
+        os.makedirs("uploads")
+
     category = categorize_file(uploaded_file.name)
     file_path = os.path.join("uploads", uploaded_file.name)
     
