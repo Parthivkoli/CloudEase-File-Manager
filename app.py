@@ -8,7 +8,11 @@ def init_db():
     try:
         conn = sqlite3.connect('file_manager.db')
         c = conn.cursor()
-        # Create table for storing file metadata if it doesn't exist
+
+        # Drop the table if it already exists to prevent schema mismatch
+        c.execute("DROP TABLE IF EXISTS files")
+
+        # Create table for storing file metadata
         c.execute('''
             CREATE TABLE IF NOT EXISTS files (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
