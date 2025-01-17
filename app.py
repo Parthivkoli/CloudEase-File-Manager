@@ -3,19 +3,29 @@ import os
 import sqlite3
 from PIL import Image
 
-# Create a SQLite database to store file metadata
-conn = sqlite3.connect('file_manager.db')
-c = conn.cursor()
+# Create or connect to SQLite database
+def init_db():
+    try:
+        conn = sqlite3.connect('file_manager.db')
+        c = conn.cursor()
+        # Create table for storing file metadata if it doesn't exist
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filename TEXT,
+                category TEXT,
+                file_path TEXT
+            )
+        ''')
+        return conn, c
+    except sqlite3.OperationalError as e:
+        st.error(f"Error initializing database: {e}")
+        return None, None
 
-# Create table for storing file metadata
-c.execute('''
-    CREATE TABLE IF NOT EXISTS files (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        filename TEXT,
-        category TEXT,
-        file_path TEXT
-    )
-''')
+# Initialize the database connection and cursor
+conn, c = init_db()
+if conn is None:
+    st.stop()
 
 # Function to categorize files based on file extensions
 def categorize_file(file_name):
@@ -28,35 +38,46 @@ def categorize_file(file_name):
 
 # Function to handle file upload
 def handle_file_upload(uploaded_file):
-    # Ensure the 'uploads' directory exists
-    if not os.path.exists("uploads"):
-        os.makedirs("uploads")
+    try:
+        # Ensure the 'uploads' directory exists
+        if not os.path.exists("uploads"):
+            os.makedirs("uploads")
 
-    category = categorize_file(uploaded_file.name)
-    file_path = os.path.join("uploads", uploaded_file.name)
-    
-    # Save the uploaded file to the "uploads" folder
-    with open(file_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
+        category = categorize_file(uploaded_file.name)
+        file_path = os.path.join("uploads", uploaded_file.name)
+        
+        # Save the uploaded file to the "uploads" folder
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
 
-    # Insert file metadata into SQLite database
-    c.execute("INSERT INTO files (filename, category, file_path) VALUES (?, ?, ?)",
-              (uploaded_file.name, category, file_path))
-    conn.commit()
+        # Insert file metadata into SQLite database
+        c.execute("INSERT INTO files (filename, category, file_path) VALUES (?, ?, ?)",
+                  (uploaded_file.name, category, file_path))
+        conn.commit()
 
-    return uploaded_file.name, category, file_path
+        return uploaded_file.name, category, file_path
+    except Exception as e:
+        st.error(f"Error uploading the file: {e}")
+        return None, None, None
 
 # Function to search for files in the database
 def search_files(query):
-    c.execute("SELECT * FROM files WHERE filename LIKE ?", ('%' + query + '%',))
-    return c.fetchall()
+    try:
+        c.execute("SELECT * FROM files WHERE filename LIKE ?", ('%' + query + '%',))
+        return c.fetchall()
+    except sqlite3.Error as e:
+        st.error(f"Error searching for files: {e}")
+        return []
 
 # Function to delete all files from the database and file system
 def delete_all_files():
-    c.execute("DELETE FROM files")
-    conn.commit()
-    for file in os.listdir("uploads"):
-        os.remove(os.path.join("uploads", file))
+    try:
+        c.execute("DELETE FROM files")
+        conn.commit()
+        for file in os.listdir("uploads"):
+            os.remove(os.path.join("uploads", file))
+    except sqlite3.Error as e:
+        st.error(f"Error deleting files: {e}")
 
 # Streamlit UI
 
@@ -80,9 +101,10 @@ st.markdown("""
 uploaded_file = st.file_uploader("Choose a file to upload", type=["jpg", "jpeg", "png", "gif", "pdf", "docx", "txt", "pptx"])
 if uploaded_file:
     file_name, category, file_path = handle_file_upload(uploaded_file)
-    st.success(f'🎉 File "{file_name}" uploaded successfully!')
-    st.write(f'📂 **Category**: {category}')
-    st.write(f'📍 **File path**: {file_path}')
+    if file_name:
+        st.success(f'🎉 File "{file_name}" uploaded successfully!')
+        st.write(f'📂 **Category**: {category}')
+        st.write(f'📍 **File path**: {file_path}')
 
 # Search functionality
 search_query = st.text_input("🔍 Search for a file by name")
